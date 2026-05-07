@@ -136,4 +136,15 @@ eclair.features {
 - `main` — upstream merge 또는 안정 릴리스 후보
 - `260505` — 초기 BitEver 체인 / Phoenix 호환 패치
 - `260506` — Send (splice-out) 1차 성공 시점 스냅샷 + 절차 문서
-- `260507` — `Channel.scala` 우회 패치 + 무제한 반복 send 검증 완료
+- `260507` — `Channel.scala` 우회 패치 + 무제한 반복 send + **close/force-close 진단 검증 완료**
+
+## 🆕 260506 → 260507 변화 요약
+LSP(eclair) 측 코드는 260506 패치 이후 추가 변경 없음 (`Channel.scala` 1100 우회 그대로 유지). 본 브랜치의 의의는:
+- **LSP `/close` · `/forceclose` 정상 동작 검증 완료**
+  - cooperative close: `OUT msg=Shutdown(with ShutdownNonce TLV)` 정상 발신.
+  - force-close: `commit-tx` + anchor + main-delayed publish 정상.
+- **앱 close 무동작 진단 결과 LSP 코드 무결**로 결론. 실제 수정은 `LightningEver-bitever-eclair-kmp` 의 `260507` 브랜치 (Phoenix 앱 라이브러리)에서 진행.
+- 운영 절차/재현 가이드는 `260507_CLOSECOMPLETE.md` 단일 문서로 통합.
+
+## 📜 운영 가이드 / 재현 절차
+이 LSP를 처음부터 띄우고, 채널 개설·유동성 주입·send·close까지 단계별로 따라할 수 있는 통합 가이드는 별도 문서 **`260507_CLOSECOMPLETE.md`**(운영 머신 `/root/md/`) 참조.
