@@ -719,9 +719,10 @@ case class Commitment(fundingTxIndex: Long,
         } else {
           NonceGenerator.verificationNonce(fundingTxId, fundingKey, remoteFundingPubKey, localCommit.index)
         }
-        // We have already validated the remote nonce and partial signature when we received it, so we're guaranteed
-        // that the following code cannot produce an error.
-        val Right(localSig) = unsignedCommitTx.partialSign(fundingKey, remoteFundingPubKey, localNonce, Seq(localNonce.publicNonce, remoteSig.nonce))
+        // Phoenix signs Eclair's local commit with publicNonces=[phoenixSignNonce, eclairVerifNonce].
+        // Eclair must sign with the SAME publicNonces=[remoteSig.nonce=phoenixNonce, localNonce=eclairNonce]
+        // so both partial sigs use the same AggregatedNonce and same participant indices.
+        val Right(localSig) = unsignedCommitTx.partialSign(fundingKey, remoteFundingPubKey, localNonce, Seq(remoteSig.nonce, localNonce.publicNonce))
         val Right(signedTx) = unsignedCommitTx.aggregateSigs(fundingKey.publicKey, remoteFundingPubKey, localSig, remoteSig)
         signedTx
     }

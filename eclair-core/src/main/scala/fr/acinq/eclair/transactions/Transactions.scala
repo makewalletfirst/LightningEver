@@ -358,8 +358,14 @@ object Transactions {
     def aggregateSigs(localFundingPubkey: PublicKey, remoteFundingPubkey: PublicKey, localSig: PartialSignatureWithNonce, remoteSig: PartialSignatureWithNonce, extraUtxos: Map[OutPoint, TxOut]): Either[Throwable, Transaction] = {
       val spentOutputs = buildSpentOutputs(extraUtxos)
       for {
-        // KMP: listOf(localSig.nonce, remoteSig.nonce) — local first, no key-based sorting.
-        aggregatedSignature <- Musig2.aggregateTaprootSignatures(Seq(localSig.partialSig, remoteSig.partialSig), tx, inputIndex, spentOutputs, sort(Seq(localFundingPubkey, remoteFundingPubkey)), Seq(localSig.nonce, remoteSig.nonce), None)
+        // Phoenix signs with publicNonces=[phoenixNonce, eclairNonce] (phoenix=index0).
+        // Eclair signs with publicNonces=[eclairNonce, phoenixNonce] (eclair=index0).
+        // aggregateTaprootSignatures must be called so partialSigs[i] matches publicNonces[i].
+        // remoteSig(phoenix) was made with phoenix at index0 → put remoteSig/remoteNonce first.
+        // localSig(eclair) was made with eclair at index0 in its own signing but that's also OK at index1.
+        // Both sides use same AggNonce (commutative). Position only matters for partial sig validation.
+        // Use [remoteSig, localSig] to match Phoenix's index-0 expectation.
+        aggregatedSignature <- Musig2.aggregateTaprootSignatures(Seq(remoteSig.partialSig, localSig.partialSig), tx, inputIndex, spentOutputs, sort(Seq(localFundingPubkey, remoteFundingPubkey)), Seq(remoteSig.nonce, localSig.nonce), None)
         witness = Script.witnessKeyPathPay2tr(aggregatedSignature)
       } yield tx.updateWitness(inputIndex, witness)
     }
