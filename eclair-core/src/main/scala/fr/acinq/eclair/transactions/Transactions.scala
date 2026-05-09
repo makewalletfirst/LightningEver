@@ -337,8 +337,10 @@ object Transactions {
 
     def checkRemotePartialSignature(localFundingPubKey: PublicKey, remoteFundingPubKey: PublicKey, remoteSig: PartialSignatureWithNonce, localNonce: IndividualNonce): Boolean = {
       val sortedKeys = Scripts.sort(Seq(localFundingPubKey, remoteFundingPubKey))
-      // KMP: listOf(localNonce, remoteSig.nonce) — local first, no key-based sorting.
-      val isValid = Musig2.verifyTaprootSignature(remoteSig.partialSig, remoteSig.nonce, remoteFundingPubKey, tx, inputIndex, buildSpentOutputs(Map.empty), sortedKeys, Seq(localNonce, remoteSig.nonce), None)
+      // Phoenix (remote) signs with [phoenixSigningNonce, eclairCommitNonce].
+      // From Eclair's perspective: remoteSig.nonce=phoenixSigningNonce, localNonce=eclairCommitNonce.
+      // So the signing order is [remoteSig.nonce, localNonce].
+      val isValid = Musig2.verifyTaprootSignature(remoteSig.partialSig, remoteSig.nonce, remoteFundingPubKey, tx, inputIndex, buildSpentOutputs(Map.empty), sortedKeys, Seq(remoteSig.nonce, localNonce), None)
       if (!isValid) {
         org.slf4j.LoggerFactory.getLogger("DEBUG_Musig2").error(
           s"[Musig2] checkRemotePartialSignature FAILED txid=${tx.txid} local=$localFundingPubKey remote=$remoteFundingPubKey localNonce=$localNonce remoteNonce=${remoteSig.nonce}")
