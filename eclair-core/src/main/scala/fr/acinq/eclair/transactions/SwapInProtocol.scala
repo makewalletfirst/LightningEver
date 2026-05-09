@@ -29,12 +29,22 @@ case class SwapInProtocol(userPublicKey: PublicKey, serverPublicKey: PublicKey, 
     fr.acinq.bitcoin.Bech32.encodeWitnessAddress(prefix, 1, Script.write(Script.pay2tr(internalPublicKey, None)).drop(2).toArray)
   }
 
+  private val witnessLog = org.slf4j.LoggerFactory.getLogger("A1-WITNESS")
+
   def witness(fundingTx: Transaction, index: Int, parentTxOuts: Seq[TxOut], userNonce: IndividualNonce, serverNonce: IndividualNonce, userPartialSig: ByteVector32, serverPartialSig: ByteVector32): Either[Throwable, ScriptWitness] = {
+    // KMP 방식과 동일: key sorted order로 nonces와 sigs 정렬 후 aggregate
     val publicNonces = Scripts.sortNonces(Seq(userPublicKey -> userNonce, serverPublicKey -> serverNonce))
     val sigs = Seq(userPublicKey -> userPartialSig, serverPublicKey -> serverPartialSig)
       .sortWith { case ((k1, _), (k2, _)) => fr.acinq.bitcoin.scalacompat.LexicographicalOrdering.isLessThan(k1.value, k2.value) }
       .map(_._2)
-    Musig2.aggregateTaprootSignatures(sigs, fundingTx, index, parentTxOuts, sortedKeys, publicNonces, Some(scriptTree)).map { aggregateSig =>
+    val result = Musig2.aggregateTaprootSignatures(sigs, fundingTx, index, parentTxOuts, sortedKeys, publicNonces, Some(scriptTree))
+    result match {
+      case Left(err) =>
+        witnessLog.error(s"[A1-WITNESS] aggregateTaprootSignatures FAILED: ${err.getMessage} | txid=${fundingTx.txid} idx=$index | userKey=${userPublicKey.toString.take(16)} serverKey=${serverPublicKey.toString.take(16)} | userSig=${userPartialSig.toHex.take(16)} serverSig=${serverPartialSig.toHex.take(16)}")
+      case Right(_) =>
+        witnessLog.info(s"[A1-WITNESS] aggregateTaprootSignatures SUCCESS txid=${fundingTx.txid} idx=$index")
+    }
+    result.map { aggregateSig =>
       Script.witnessKeyPathPay2tr(aggregateSig)
     }
   }
@@ -44,8 +54,11 @@ case class SwapInProtocol(userPublicKey: PublicKey, serverPublicKey: PublicKey, 
 
   def signSwapInputUser(fundingTx: Transaction, index: Int, parentTxOuts: Seq[TxOut], userPrivateKey: PrivateKey, privateNonce: SecretNonce, userNonce: IndividualNonce, serverNonce: IndividualNonce): Either[Throwable, ByteVector32] = {
     scala.util.Try {
-      val publicNonces = Scripts.sortNonces(Seq(userPublicKey -> userNonce, serverPublicKey -> serverNonce))
-      Musig2.signTaprootInput(userPrivateKey, fundingTx, index, parentTxOuts, sortedKeys, privateNonce, publicNonces, Some(scriptTree))
+      // KMP 방식과 동일: unsorted [user, server] 순서로 publicKeys와 publicNonces 전달
+      // KMP: publicKeys=listOf(user,server), publicNonces=listOf(userNonce,serverNonce)
+      val publicKeys = Seq(userPublicKey, serverPublicKey)
+      val publicNonces = Seq(userNonce, serverNonce)
+      Musig2.signTaprootInput(userPrivateKey, fundingTx, index, parentTxOuts, publicKeys, privateNonce, publicNonces, Some(scriptTree))
     }.toEither.flatMap(identity)
   }
 
@@ -56,8 +69,11 @@ case class SwapInProtocol(userPublicKey: PublicKey, serverPublicKey: PublicKey, 
 
   def signSwapInputServer(fundingTx: Transaction, index: Int, parentTxOuts: Seq[TxOut], serverPrivateKey: PrivateKey, privateNonce: SecretNonce, userNonce: IndividualNonce, serverNonce: IndividualNonce): Either[Throwable, ByteVector32] = {
     scala.util.Try {
-      val publicNonces = Scripts.sortNonces(Seq(userPublicKey -> userNonce, serverPublicKey -> serverNonce))
-      Musig2.signTaprootInput(serverPrivateKey, fundingTx, index, parentTxOuts, sortedKeys, privateNonce, publicNonces, Some(scriptTree))
+      // KMP 방식과 동일: unsorted [user, server] 순서로 publicKeys와 publicNonces 전달
+      // KMP: publicKeys=listOf(user,server), publicNonces=listOf(userNonce,serverNonce)
+      val publicKeys = Seq(userPublicKey, serverPublicKey)
+      val publicNonces = Seq(userNonce, serverNonce)
+      Musig2.signTaprootInput(serverPrivateKey, fundingTx, index, parentTxOuts, publicKeys, privateNonce, publicNonces, Some(scriptTree))
     }.toEither.flatMap(identity)
   }
 

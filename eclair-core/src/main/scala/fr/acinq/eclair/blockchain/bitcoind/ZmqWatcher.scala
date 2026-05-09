@@ -461,33 +461,39 @@ private class ZmqWatcher(nodeParams: NodeParams, blockHeight: AtomicLong, client
   }
 
   private def checkConfirmed(w: WatchConfirmed[_ <: WatchConfirmedTriggered], currentHeight: BlockHeight): Future[Unit] = {
-    log.debug("checking confirmations of txid={}", w.txId)
+    log.info("[ZMQ-CHECK] checking confirmations of txid={} minDepth={} currentHeight={}", w.txId, w.minDepth, currentHeight)
     client.getTxConfirmations(w.txId).flatMap {
       case Some(confirmations) if confirmations >= w.minDepth =>
+        log.info("[ZMQ-CHECK] txid={} has {} confirmations >= minDepth={}, fetching tx...", w.txId, confirmations, w.minDepth)
         // NB: this is very inefficient since internally we call `getrawtransaction` three times, but it doesn't really
         // matter because this only happens once, when the watched transaction has reached min_depth
         client.getTransaction(w.txId).flatMap { tx =>
+          log.info("[ZMQ-CHECK] got transaction txid={}, fetching shortId...", tx.txid)
           client.getTransactionShortId(w.txId).map {
-            case (height, index) => w match {
-              case w: WatchFundingConfirmed => context.self ! TriggerEvent(w.replyTo, w, WatchFundingConfirmedTriggered(height, index, tx))
-              case w: WatchTxConfirmed => context.self ! TriggerEvent(w.replyTo, w, WatchTxConfirmedTriggered(height, index, tx))
-              case w: WatchParentTxConfirmed => context.self ! TriggerEvent(w.replyTo, w, WatchParentTxConfirmedTriggered(height, index, tx))
-              case w: WatchAlternativeCommitTxConfirmed => context.self ! TriggerEvent(w.replyTo, w, WatchAlternativeCommitTxConfirmedTriggered(height, index, tx))
-            }
-          }
-        }
+            case (height, index) =>
+              log.info("[ZMQ-CHECK] got shortId height={} index={} for txid={}, sending TriggerEvent", height, index, w.txId)
+              w match {
+                case w: WatchFundingConfirmed => context.self ! TriggerEvent(w.replyTo, w, WatchFundingConfirmedTriggered(height, index, tx))
+                case w: WatchTxConfirmed => context.self ! TriggerEvent(w.replyTo, w, WatchTxConfirmedTriggered(height, index, tx))
+                case w: WatchParentTxConfirmed => context.self ! TriggerEvent(w.replyTo, w, WatchParentTxConfirmedTriggered(height, index, tx))
+                case w: WatchAlternativeCommitTxConfirmed => context.self ! TriggerEvent(w.replyTo, w, WatchAlternativeCommitTxConfirmedTriggered(height, index, tx))
+              }
+          }.recover { case t => log.error("[ZMQ-CHECK] getTransactionShortId failed for txid={}: {}", w.txId, t.getMessage) }
+        }.recover { case t => log.error("[ZMQ-CHECK] getTransaction failed for txid={}: {}", w.txId, t.getMessage) }
       case Some(confirmations) =>
+        log.info("[ZMQ-CHECK] txid={} has {} confirmations < minDepth={}, scheduling next check at block {}", w.txId, confirmations, w.minDepth, currentHeight + w.minDepth - confirmations)
         // Once the transaction is confirmed, we don't need to check again at every new block, we only need to check
         // again once we should have reached the minimum depth to verify that there hasn't been a reorg.
         context.self ! SetWatchHint(w, CheckAfterBlock(currentHeight + w.minDepth - confirmations))
         Future.successful(())
       case None =>
+        log.info("[ZMQ-CHECK] txid={} not found (unconfirmed), next check at block {}", w.txId, currentHeight + w.minDepth)
         // The transaction is unconfirmed: we don't need to check again at every new block: we can check only once
         // every minDepth blocks, which is more efficient. If the transaction is included at the current height in
         // a reorg, we will trigger the watch one block later than expected, but this is fine.
         context.self ! SetWatchHint(w, CheckAfterBlock(currentHeight + w.minDepth))
         Future.successful(())
-    }
+    }.recover { case t => log.error("[ZMQ-CHECK] getTxConfirmations failed for txid={}: {}", w.txId, t.getMessage) }
   }
 
 }
