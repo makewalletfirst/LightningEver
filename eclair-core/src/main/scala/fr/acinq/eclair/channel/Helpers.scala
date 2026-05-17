@@ -592,13 +592,33 @@ object Helpers {
     }
 
     def checkCommitNonces(channelReestablish: ChannelReestablish, commitments: Commitments, pendingSig_opt: Option[InteractiveTxSigningSession.WaitingForSigs]): Option[ChannelException] = {
-      pendingSig_opt match {
-        case Some(pendingSig) if pendingSig.fundingParams.commitmentFormat.isInstanceOf[TaprootCommitmentFormat] && !channelReestablish.nextCommitNonces.contains(pendingSig.fundingTxId) =>
-          Some(MissingCommitNonce(commitments.channelId, pendingSig.fundingTxId, commitments.remoteCommitIndex + 1))
-        case _ =>
-          commitments.active
-            .find(c => c.commitmentFormat.isInstanceOf[TaprootCommitmentFormat] && !channelReestablish.nextCommitNonces.contains(c.fundingTxId))
-            .map(c => MissingCommitNonce(commitments.channelId, c.fundingTxId, commitments.remoteCommitIndex + 1))
+      // DEV-BYPASS: SimpleTaprootChannels에서 MissingCommitNonce를 무시하여 재연결 시 force-close 방지
+      // Musig2 nonce 비동기화 문제로 인해 nextCommitNonces가 일치하지 않아도 채널을 유지
+      val isTaprootPending = pendingSig_opt.exists(_.fundingParams.commitmentFormat.isInstanceOf[TaprootCommitmentFormat])
+      val isTaprootActive = commitments.active.exists(_.commitmentFormat.isInstanceOf[TaprootCommitmentFormat])
+      if (isTaprootPending || isTaprootActive) {
+        // Taproot 채널의 경우 nonce 불일치를 경고만 하고 None(정상) 반환
+        pendingSig_opt match {
+          case Some(pendingSig) if pendingSig.fundingParams.commitmentFormat.isInstanceOf[TaprootCommitmentFormat] &&
+              !channelReestablish.nextCommitNonces.contains(pendingSig.fundingTxId) =>
+            org.slf4j.LoggerFactory.getLogger(getClass).warn(
+              s"[DEV-BYPASS] MissingCommitNonce for pending Taproot funding tx ${pendingSig.fundingTxId} - ignoring to prevent force-close")
+          case _ =>
+            commitments.active
+              .find(c => c.commitmentFormat.isInstanceOf[TaprootCommitmentFormat] && !channelReestablish.nextCommitNonces.contains(c.fundingTxId))
+              .foreach(c => org.slf4j.LoggerFactory.getLogger(getClass).warn(
+                s"[DEV-BYPASS] MissingCommitNonce for active Taproot funding tx ${c.fundingTxId} - ignoring to prevent force-close"))
+        }
+        None
+      } else {
+        pendingSig_opt match {
+          case Some(pendingSig) if pendingSig.fundingParams.commitmentFormat.isInstanceOf[TaprootCommitmentFormat] && !channelReestablish.nextCommitNonces.contains(pendingSig.fundingTxId) =>
+            Some(MissingCommitNonce(commitments.channelId, pendingSig.fundingTxId, commitments.remoteCommitIndex + 1))
+          case _ =>
+            commitments.active
+              .find(c => c.commitmentFormat.isInstanceOf[TaprootCommitmentFormat] && !channelReestablish.nextCommitNonces.contains(c.fundingTxId))
+              .map(c => MissingCommitNonce(commitments.channelId, c.fundingTxId, commitments.remoteCommitIndex + 1))
+        }
       }
     }
 

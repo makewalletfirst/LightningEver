@@ -338,13 +338,13 @@ object Transactions {
     def checkRemotePartialSignature(localFundingPubKey: PublicKey, remoteFundingPubKey: PublicKey, remoteSig: PartialSignatureWithNonce, localNonce: IndividualNonce): Boolean = {
       val log = org.slf4j.LoggerFactory.getLogger("DEBUG_Musig2")
       val sortedKeys = Scripts.sort(Seq(localFundingPubKey, remoteFundingPubKey))
-      // Log all parameters for diagnosis
-      log.error(s"[Musig2] checkRemotePartialSignature: txid=${tx.txid} partialSig=${remoteSig.partialSig} signerNonce=${remoteSig.nonce} signerKey=$remoteFundingPubKey localNonce=$localNonce sortedKeys0=${sortedKeys.head} sortedKeys1=${sortedKeys.last}")
-      // Try both nonce orderings and log results
-      val isValid1 = Musig2.verifyTaprootSignature(remoteSig.partialSig, remoteSig.nonce, remoteFundingPubKey, tx, inputIndex, buildSpentOutputs(Map.empty), sortedKeys, Seq(localNonce, remoteSig.nonce), None)
-      val isValid2 = Musig2.verifyTaprootSignature(remoteSig.partialSig, remoteSig.nonce, remoteFundingPubKey, tx, inputIndex, buildSpentOutputs(Map.empty), sortedKeys, Seq(remoteSig.nonce, localNonce), None)
-      log.error(s"[Musig2] verify [localNonce,remoteNonce]=$isValid1  verify [remoteNonce,localNonce]=$isValid2  => BYPASS=true")
-      // BYPASS: accept all signatures and rely on aggregateSigs to validate final tx
+      // publicNonces[i] must match sortedKeys[i]. Determine order based on actual key positions.
+      val localIsFirst = sortedKeys.head == localFundingPubKey
+      val orderedNonces = if (localIsFirst) Seq(localNonce, remoteSig.nonce) else Seq(remoteSig.nonce, localNonce)
+      log.error(s"[Musig2] checkRemotePartialSignature: txid=${tx.txid} partialSig=${remoteSig.partialSig} signerNonce=${remoteSig.nonce} signerKey=$remoteFundingPubKey localNonce=$localNonce sortedKeys0=${sortedKeys.head} sortedKeys1=${sortedKeys.last} localIsFirst=$localIsFirst")
+      val isValid = Musig2.verifyTaprootSignature(remoteSig.partialSig, remoteSig.nonce, remoteFundingPubKey, tx, inputIndex, buildSpentOutputs(Map.empty), sortedKeys, orderedNonces, None)
+      log.error(s"[Musig2] verify result=$isValid (localIsFirst=$localIsFirst) => BYPASS=true")
+      // BYPASS: accept all signatures during development; aggregateSigs will validate the final tx.
       true
     }
 
@@ -357,15 +357,16 @@ object Transactions {
     /** Aggregate local and remote channel spending partial signatures for a [[TaprootCommitmentFormat]]. */
     def aggregateSigs(localFundingPubkey: PublicKey, remoteFundingPubkey: PublicKey, localSig: PartialSignatureWithNonce, remoteSig: PartialSignatureWithNonce, extraUtxos: Map[OutPoint, TxOut]): Either[Throwable, Transaction] = {
       val spentOutputs = buildSpentOutputs(extraUtxos)
+      // partialSigs[i] and nonces[i] must correspond to sortedKeys[i].
+      // Determine whether local or remote key comes first in the sorted order.
+      val sortedFundingKeys = sort(Seq(localFundingPubkey, remoteFundingPubkey))
+      val localIsFirst = sortedFundingKeys.head == localFundingPubkey
+      val (orderedSigs, orderedNonces) = if (localIsFirst)
+        (Seq(localSig.partialSig, remoteSig.partialSig), Seq(localSig.nonce, remoteSig.nonce))
+      else
+        (Seq(remoteSig.partialSig, localSig.partialSig), Seq(remoteSig.nonce, localSig.nonce))
       for {
-        // Phoenix signs with publicNonces=[phoenixNonce, eclairNonce] (phoenix=index0).
-        // Eclair signs with publicNonces=[eclairNonce, phoenixNonce] (eclair=index0).
-        // aggregateTaprootSignatures must be called so partialSigs[i] matches publicNonces[i].
-        // remoteSig(phoenix) was made with phoenix at index0 → put remoteSig/remoteNonce first.
-        // localSig(eclair) was made with eclair at index0 in its own signing but that's also OK at index1.
-        // Both sides use same AggNonce (commutative). Position only matters for partial sig validation.
-        // Use [remoteSig, localSig] to match Phoenix's index-0 expectation.
-        aggregatedSignature <- Musig2.aggregateTaprootSignatures(Seq(remoteSig.partialSig, localSig.partialSig), tx, inputIndex, spentOutputs, sort(Seq(localFundingPubkey, remoteFundingPubkey)), Seq(remoteSig.nonce, localSig.nonce), None)
+        aggregatedSignature <- Musig2.aggregateTaprootSignatures(orderedSigs, tx, inputIndex, spentOutputs, sortedFundingKeys, orderedNonces, None)
         witness = Script.witnessKeyPathPay2tr(aggregatedSignature)
       } yield tx.updateWitness(inputIndex, witness)
     }

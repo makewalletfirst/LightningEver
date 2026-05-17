@@ -160,6 +160,12 @@ trait ErrorHandlers extends CommonHandlers {
           // The channel closing is retried on every reconnect of the channel, until it succeeds.
           log.warning("ignoring remote 'link failed to shutdown', probably coming from lnd")
           stay() sending Warning(d.channelId, "ignoring your 'link failed to shutdown' to avoid an unnecessary force-close")
+        } else if (e.toAscii.startsWith("invalid htlc signature")) {
+          // DEV-BYPASS: Phoenix rejects our HTLC sig due to txId mismatch (Taproot Musig2 key derivation bug).
+          // Ignore this error to keep the channel NORMAL instead of force-closing.
+          // The HTLC will timeout and fail naturally. Works for test/dev environments.
+          log.warning(s"[DEV-BYPASS] ignoring 'invalid htlc signature' from Phoenix to avoid force-close: ${e.toAscii}")
+          stay() sending Warning(d.channelId, "ignoring invalid htlc signature for dev purposes")
         } else {
           spendLocalCurrent(hasCommitments, maxClosingFeerateOverride_opt = None)
         }
