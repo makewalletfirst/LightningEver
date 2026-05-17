@@ -155,7 +155,13 @@ object NodeRelay {
 
   /** If we fail to relay a payment, we may want to attempt on-the-fly funding if it makes sense. */
   private def shouldAttemptOnTheFlyFunding(nodeParams: NodeParams, recipientFeatures_opt: Option[Features[InitFeature]], failures: Seq[PaymentFailure])(implicit context: ActorContext[Command]): Boolean = {
-    val featureOk = Features.canUseFeature(nodeParams.features.initFeatures(), recipientFeatures_opt.getOrElse(Features.empty), Features.OnTheFlyFunding)
+    // DEV-BYPASS for BitEver: when recipientFeatures_opt is None (peer info unknown), assume
+    // recipient supports OnTheFlyFunding rather than rejecting. Phoenix wallet peers always
+    // advertise it, but the GetPeerInfo response may be delayed if the peer just connected.
+    val featureOk = recipientFeatures_opt match {
+      case Some(f) => Features.canUseFeature(nodeParams.features.initFeatures(), f, Features.OnTheFlyFunding)
+      case None    => nodeParams.features.initFeatures().hasFeature(Features.OnTheFlyFunding)
+    }
     val routerBalanceTooLow = failures.collectFirst { case f@LocalFailure(_, _, BalanceTooLow) => f }.nonEmpty
     val channelBalanceTooLow = failures.collectFirst { case f@LocalFailure(_, _, _: InsufficientFunds) => f }.nonEmpty
     val routeNotFound = failures.collectFirst { case f@LocalFailure(_, _, RouteNotFound) => f }.nonEmpty
@@ -280,6 +286,12 @@ class NodeRelay private(nodeParams: NodeParams,
                 case BlindedPathsResolver.PartialBlindedRoute(walletNodeId: EncodedNodeId.WithPublicKey.Wallet, _, _) if nodeParams.peerWakeUpConfig.enabled =>
                   context.log.debug("forwarding payment to blinded peer {}", walletNodeId.publicKey)
                   attemptWakeUp(upstream, walletNodeId.publicKey, recipient, nextPayload, nextPacket_opt)
+                case BlindedPathsResolver.PartialBlindedRoute(nextNodeId: EncodedNodeId.WithPublicKey, _, _) =>
+                  // DEV-BYPASS for BitEver: when we are the introduction node, the resolved next-hop
+                  // publicKey IS the real wallet peer. Pass it as walletNodeId_opt so that NodeRelay
+                  // can trigger on-the-fly funding if direct routing to that node fails.
+                  context.log.info("forwarding payment to blinded recipient {} with walletNodeId={} (BitEver DEV-BYPASS)", recipient.nodeId, nextNodeId.publicKey)
+                  relay(upstream, recipient, Some(nextNodeId.publicKey), None, nextPayload, nextPacket_opt)
                 case _ =>
                   context.log.debug("forwarding payment to blinded recipient {}", recipient.nodeId)
                   relay(upstream, recipient, None, None, nextPayload, nextPacket_opt)
@@ -300,11 +312,11 @@ class NodeRelay private(nodeParams: NodeParams,
     Behaviors.receiveMessagePartial {
       rejectExtraHtlcPartialFunction orElse {
         case info: WrappedPeerInfo =>
-          val walletNodeId_opt = if (info.remoteFeatures_opt.exists(_.hasFeature(Features.WakeUpNotificationClient))) {
-            Some(recipient.nodeId)
-          } else {
-            None
-          }
+          // DEV-BYPASS for BitEver: always treat recipient as a wallet peer so that on-the-fly
+          // funding is attempted when local routing fails. Without this, recipients without
+          // wake_up_notification_client advertised end up with walletNodeId_opt=None and the
+          // payment fails with "route not found" instead of triggering on-the-fly funding.
+          val walletNodeId_opt = Some(recipient.nodeId)
           walletNodeId_opt match {
             case Some(walletNodeId) if nodeParams.peerWakeUpConfig.enabled => attemptWakeUp(upstream, walletNodeId, recipient, nextPayload, nextPacket_opt)
             case _ => relay(upstream, recipient, walletNodeId_opt, None, nextPayload, nextPacket_opt)

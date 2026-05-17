@@ -31,7 +31,7 @@ import fr.acinq.eclair.channel.publish.TxPublisher.SetChannelId
 import fr.acinq.eclair.crypto.keymanager.{LocalCommitmentKeys, RemoteCommitmentKeys}
 import fr.acinq.eclair.crypto.{NonceGenerator, ShaChain}
 import fr.acinq.eclair.io.Peer.OpenChannelResponse
-import fr.acinq.eclair.transactions.Transactions
+import fr.acinq.eclair.transactions.{Scripts, Transactions}
 import fr.acinq.eclair.transactions.Transactions.{AnchorOutputsCommitmentFormat, DefaultCommitmentFormat, SimpleTaprootChannelCommitmentFormat}
 import fr.acinq.eclair.wire.protocol.{AcceptChannel, AcceptChannelTlv, AnnouncementSignatures, ChannelReady, ChannelTlv, Error, FundingCreated, FundingSigned, OpenChannel, OpenChannelTlv, TlvStream}
 import fr.acinq.eclair.{MilliSatoshiLong, randomKey, toLongId}
@@ -227,7 +227,13 @@ trait ChannelOpenSingleFunded extends SingleFundingHandlers with ErrorHandlers {
               val localNonce = NonceGenerator.verificationNonce(NonceGenerator.dummyFundingTxId, fundingKey, NonceGenerator.dummyRemoteFundingPubKey, 0)
               remoteNextCommitNonces.get(NonceGenerator.dummyFundingTxId) match {
                 case Some(remoteNonce) =>
-                  remoteCommitTx.partialSign(fundingKey, d.remoteFundingPubKey, localNonce, Seq(localNonce.publicNonce, remoteNonce)) match {
+                  // DEV-BYPASS: publicNonces[i] must correspond to sortedKeys[i].
+                  val sortedFundingKeys = Scripts.sort(Seq(fundingKey.publicKey, d.remoteFundingPubKey))
+                  val orderedNonces = if (sortedFundingKeys.head == fundingKey.publicKey)
+                    Seq(localNonce.publicNonce, remoteNonce)
+                  else
+                    Seq(remoteNonce, localNonce.publicNonce)
+                  remoteCommitTx.partialSign(fundingKey, d.remoteFundingPubKey, localNonce, orderedNonces) match {
                     case Left(_) => Left(InvalidCommitNonce(d.channelId, NonceGenerator.dummyFundingTxId, commitmentNumber = 0))
                     case Right(psig) => Right(psig)
                   }
@@ -297,7 +303,13 @@ trait ChannelOpenSingleFunded extends SingleFundingHandlers with ErrorHandlers {
                   val localNonce = NonceGenerator.verificationNonce(NonceGenerator.dummyFundingTxId, fundingKey, NonceGenerator.dummyRemoteFundingPubKey, 0)
                   remoteNextCommitNonces.get(NonceGenerator.dummyFundingTxId) match {
                     case Some(remoteNonce) =>
-                      remoteCommitTx.partialSign(fundingKey, d.remoteFundingPubKey, localNonce, Seq(localNonce.publicNonce, remoteNonce)) match {
+                      // DEV-BYPASS: publicNonces[i] must correspond to sortedKeys[i].
+                      val sortedFundingKeys = Scripts.sort(Seq(fundingKey.publicKey, d.remoteFundingPubKey))
+                      val orderedNonces = if (sortedFundingKeys.head == fundingKey.publicKey)
+                        Seq(localNonce.publicNonce, remoteNonce)
+                      else
+                        Seq(remoteNonce, localNonce.publicNonce)
+                      remoteCommitTx.partialSign(fundingKey, d.remoteFundingPubKey, localNonce, orderedNonces) match {
                         case Left(_) => Left(InvalidCommitNonce(channelId, NonceGenerator.dummyFundingTxId, commitmentNumber = 0))
                         case Right(psig) => Right(psig)
                       }

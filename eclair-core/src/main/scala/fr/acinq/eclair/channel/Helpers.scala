@@ -166,7 +166,8 @@ object Helpers {
     if (nodeParams.chainHash != open.chainHash) return Left(InvalidChainHash(open.temporaryChannelId, local = nodeParams.chainHash, remote = open.chainHash))
 
     // BOLT #2: Channel funding limits
-    if (open.fundingAmount < nodeParams.channelConf.minFundingSatoshis(open.channelFlags)) return Left(FundingAmountTooLow(open.temporaryChannelId, open.fundingAmount, nodeParams.channelConf.minFundingSatoshis(open.channelFlags)))
+    // BitEver DEV-BYPASS: skip min-funding check when buyer is using on-the-fly funding (they contribute 0 and request all funding from LSP)
+    if (!open.usesOnTheFlyFunding && open.fundingAmount < nodeParams.channelConf.minFundingSatoshis(open.channelFlags)) return Left(FundingAmountTooLow(open.temporaryChannelId, open.fundingAmount, nodeParams.channelConf.minFundingSatoshis(open.channelFlags)))
     if (open.fundingAmount >= Channel.MAX_FUNDING_WITHOUT_WUMBO && !localFeatures.hasFeature(Features.Wumbo)) return Left(FundingAmountTooHigh(open.temporaryChannelId, open.fundingAmount, Channel.MAX_FUNDING_WITHOUT_WUMBO))
 
     // BOLT #2: The receiving node MUST fail the channel if: push_msat is greater than funding_satoshis * 1000.
@@ -827,7 +828,13 @@ object Helpers {
                 // It will only happen if our peer sent an invalid nonce, in which case we cannot do anything anyway
                 // apart from eventually force-closing.
                 def localSig(tx: ClosingTx, localNonce: LocalNonce): Option[PartialSignatureWithNonce] = {
-                  tx.partialSign(localFundingKey, commitment.remoteFundingPubKey, localNonce, Seq(localNonce.publicNonce, remoteNonce)).toOption
+                  // DEV-BYPASS: publicNonces[i] must correspond to sortedKeys[i].
+                  val sortedFundingKeys = Scripts.sort(Seq(localFundingKey.publicKey, commitment.remoteFundingPubKey))
+                  val orderedNonces = if (sortedFundingKeys.head == localFundingKey.publicKey)
+                    Seq(localNonce.publicNonce, remoteNonce)
+                  else
+                    Seq(remoteNonce, localNonce.publicNonce)
+                  tx.partialSign(localFundingKey, commitment.remoteFundingPubKey, localNonce, orderedNonces).toOption
                 }
 
                 TlvStream(Set(
@@ -876,8 +883,14 @@ object Helpers {
               closingTxsWithSigs.headOption match {
                 case Some((closingTx, remoteSig, sigToTlv)) =>
                   val localFundingKey = channelKeys.fundingKey(commitment.fundingTxIndex)
+                  // DEV-BYPASS: publicNonces[i] must correspond to sortedKeys[i].
+                  val sortedFundingKeysA = Scripts.sort(Seq(localFundingKey.publicKey, commitment.remoteFundingPubKey))
+                  val orderedNoncesA = if (sortedFundingKeysA.head == localFundingKey.publicKey)
+                    Seq(localNonce.publicNonce, remoteSig.nonce)
+                  else
+                    Seq(remoteSig.nonce, localNonce.publicNonce)
                   val signedClosingTx_opt = for {
-                    localSig <- closingTx.partialSign(localFundingKey, commitment.remoteFundingPubKey, localNonce, Seq(localNonce.publicNonce, remoteSig.nonce)).toOption
+                    localSig <- closingTx.partialSign(localFundingKey, commitment.remoteFundingPubKey, localNonce, orderedNoncesA).toOption
                     signedTx <- closingTx.aggregateSigs(localFundingKey.publicKey, commitment.remoteFundingPubKey, localSig, remoteSig).toOption
                   } yield (closingTx.copy(tx = signedTx), localSig.partialSig)
                   signedClosingTx_opt match {
@@ -950,8 +963,14 @@ object Helpers {
                   case Some(localNonces) => localNonces.remoteOnly
                   case None => return Left(InvalidCloseSignature(commitment.channelId, closingTx.tx.txid))
                 }
+                // DEV-BYPASS: publicNonces[i] must correspond to sortedKeys[i].
+                val sortedFundingKeysB = Scripts.sort(Seq(localFundingKey.publicKey, commitment.remoteFundingPubKey))
+                val orderedNoncesB = if (sortedFundingKeysB.head == localFundingKey.publicKey)
+                  Seq(localNonce.publicNonce, remoteSig.nonce)
+                else
+                  Seq(remoteSig.nonce, localNonce.publicNonce)
                 for {
-                  localSig <- closingTx.partialSign(localFundingKey, commitment.remoteFundingPubKey, localNonce, Seq(localNonce.publicNonce, remoteSig.nonce)).toOption
+                  localSig <- closingTx.partialSign(localFundingKey, commitment.remoteFundingPubKey, localNonce, orderedNoncesB).toOption
                   signedTx <- closingTx.aggregateSigs(localFundingKey.publicKey, commitment.remoteFundingPubKey, localSig, remoteSig).toOption
                 } yield closingTx.copy(tx = signedTx)
             }

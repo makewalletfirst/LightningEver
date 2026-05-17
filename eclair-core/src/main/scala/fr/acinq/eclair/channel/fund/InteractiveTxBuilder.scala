@@ -113,10 +113,17 @@ object InteractiveTxBuilder {
       commitmentFormat match {
         case _: SegwitV0CommitmentFormat => Right(spliceTx.sign(localFundingKey, remoteFundingPubkey, spentUtxos))
         case _: SimpleTaprootChannelCommitmentFormat => (localNonce_opt, remoteNonce_opt) match {
-          case (Some(localNonce), Some(remoteNonce)) => spliceTx.partialSign(localFundingKey, remoteFundingPubkey, spentUtxos, localNonce, Seq(localNonce.publicNonce, remoteNonce)) match {
-            case Left(_) => Left(InvalidFundingNonce(channelId, tx.txid))
-            case Right(sig) => Right(sig)
-          }
+          case (Some(localNonce), Some(remoteNonce)) =>
+            // DEV-BYPASS: publicNonces[i] must correspond to sortedKeys[i].
+            val sortedFundingKeys = Scripts.sort(Seq(localFundingKey.publicKey, remoteFundingPubkey))
+            val orderedNonces = if (sortedFundingKeys.head == localFundingKey.publicKey)
+              Seq(localNonce.publicNonce, remoteNonce)
+            else
+              Seq(remoteNonce, localNonce.publicNonce)
+            spliceTx.partialSign(localFundingKey, remoteFundingPubkey, spentUtxos, localNonce, orderedNonces) match {
+              case Left(_) => Left(InvalidFundingNonce(channelId, tx.txid))
+              case Right(sig) => Right(sig)
+            }
           case _ => Left(MissingFundingNonce(channelId, tx.txid))
         }
       }
@@ -990,7 +997,13 @@ private class InteractiveTxBuilder(replyTo: ActorRef[InteractiveTxBuilder.Respon
             remoteCommitNonces_opt match {
               case Some(remoteNonces) =>
                 val localNonce = NonceGenerator.signingNonce(localFundingKey.publicKey, fundingParams.remoteFundingPubKey, fundingTx.txid)
-                remoteCommitTx.partialSign(localFundingKey, fundingParams.remoteFundingPubKey, localNonce, Seq(localNonce.publicNonce, remoteNonces.commitNonce)) match {
+                // DEV-BYPASS: publicNonces[i] must correspond to sortedKeys[i].
+                val sortedFundingKeys = Scripts.sort(Seq(localFundingKey.publicKey, fundingParams.remoteFundingPubKey))
+                val orderedNonces = if (sortedFundingKeys.head == localFundingKey.publicKey)
+                  Seq(localNonce.publicNonce, remoteNonces.commitNonce)
+                else
+                  Seq(remoteNonces.commitNonce, localNonce.publicNonce)
+                remoteCommitTx.partialSign(localFundingKey, fundingParams.remoteFundingPubKey, localNonce, orderedNonces) match {
                   case Left(_) => Left(InvalidCommitNonce(channelParams.channelId, fundingTx.txid, purpose.remoteCommitIndex))
                   case Right(localSig) => Right(localSig)
                 }
