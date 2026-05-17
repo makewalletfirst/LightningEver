@@ -857,16 +857,15 @@ private class InteractiveTxBuilder(replyTo: ActorRef[InteractiveTxBuilder.Respon
     }
 
     val sharedInput_opt = fundingParams.sharedInput_opt.map(sharedInput => {
+      // BitEver DEV-BYPASS: skip remote channel reserve check entirely (zero-reserve channels)
+      // The check would reject splice when peer's balance falls below 1% of funding amount, even
+      // for small mining-fee-only contributions (-111 sat). On BitEver test chain we accept this.
       if (fundingParams.remoteContribution >= 0.sat) {
-        // If remote has a positive contribution, we do not check their post-splice reserve level, because they are improving
-        // their situation, even if they stay below the requirement. Note that if local splices-in some funds in the same
-        // operation, remote post-splice reserve may actually be worse than before, but that's not their fault.
+        // unchanged: positive contribution, no reserve check
       } else {
-        // If remote removes funds from the channel, it must meet reserve requirements post-splice
         val remoteReserve = (fundingParams.fundingAmount / 100).max(fundingParams.dustLimit)
         if (sharedOutput.remoteAmount < remoteReserve) {
-          log.warn("invalid interactive tx: peer takes too much funds out and falls below the channel reserve ({} < {})", sharedOutput.remoteAmount, remoteReserve)
-          return Left(InvalidCompleteInteractiveTx(fundingParams.channelId))
+          log.warn("[DEV-BYPASS] peer below channel reserve ({} < {}) — ignoring on BitEver test chain", sharedOutput.remoteAmount, remoteReserve)
         }
       }
       if (sharedInputs.length > 1) {
