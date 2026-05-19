@@ -25,7 +25,7 @@ import fr.acinq.bitcoin.ScriptFlags
 import fr.acinq.bitcoin.psbt.Psbt
 import fr.acinq.bitcoin.scalacompat.Crypto.{PrivateKey, PublicKey}
 import fr.acinq.bitcoin.scalacompat.Musig2.{IndividualNonce, LocalNonce}
-import fr.acinq.bitcoin.scalacompat.{ByteVector32, LexicographicalOrdering, OutPoint, Satoshi, SatoshiLong, Script, ScriptWitness, Transaction, TxId, TxIn, TxOut}
+import fr.acinq.bitcoin.scalacompat.{ByteVector32, ByteVector64, LexicographicalOrdering, OutPoint, Satoshi, SatoshiLong, Script, ScriptWitness, Transaction, TxId, TxIn, TxOut}
 import fr.acinq.eclair.blockchain.OnChainChannelFunder
 import fr.acinq.eclair.blockchain.fee.FeeratePerKw
 import fr.acinq.eclair.channel.ChannelSpendSignature.IndividualSignature
@@ -335,7 +335,8 @@ object InteractiveTxBuilder {
                                           txCompleteReceived: Option[TxComplete] = None,
                                           inputsReceivedCount: Int = 0,
                                           outputsReceivedCount: Int = 0,
-                                          swapInInputs: Seq[(UInt64, TxAddInputTlv.SwapInParams)] = Nil) {
+                                          swapInInputs: Seq[(UInt64, TxAddInputTlv.SwapInParams)] = Nil,
+                                          swapInInputsLegacy: Seq[(UInt64, TxAddInputTlv.SwapInParamsLegacy)] = Nil) {
     val isComplete: Boolean = txCompleteSent.isDefined && txCompleteReceived.isDefined
   }
 
@@ -379,11 +380,11 @@ object InteractiveTxBuilder {
     def localSigs: TxSignatures
     def signedTx_opt: Option[Transaction]
   }
-  case class PartiallySignedSharedTransaction(tx: SharedTransaction, localSigs: TxSignatures, swapInParams: Seq[(UInt64, TxAddInputTlv.SwapInParams)] = Nil) extends SignedSharedTransaction {
+  case class PartiallySignedSharedTransaction(tx: SharedTransaction, localSigs: TxSignatures, swapInParams: Seq[(UInt64, TxAddInputTlv.SwapInParams)] = Nil, swapInParamsLegacy: Seq[(UInt64, TxAddInputTlv.SwapInParamsLegacy)] = Nil) extends SignedSharedTransaction {
     override val txId: TxId = tx.buildUnsignedTx().txid
     override val signedTx_opt: Option[Transaction] = None
   }
-  case class FullySignedSharedTransaction(tx: SharedTransaction, localSigs: TxSignatures, remoteSigs: TxSignatures, sharedSigs_opt: Option[ScriptWitness], swapInParams: Seq[(UInt64, TxAddInputTlv.SwapInParams)] = Nil) extends SignedSharedTransaction {
+  case class FullySignedSharedTransaction(tx: SharedTransaction, localSigs: TxSignatures, remoteSigs: TxSignatures, sharedSigs_opt: Option[ScriptWitness], swapInParams: Seq[(UInt64, TxAddInputTlv.SwapInParams)] = Nil, swapInParamsLegacy: Seq[(UInt64, TxAddInputTlv.SwapInParamsLegacy)] = Nil) extends SignedSharedTransaction {
     val signedTx: Transaction = {
       import tx._
       val unsignedTx = tx.buildUnsignedTx()
@@ -391,9 +392,11 @@ object InteractiveTxBuilder {
       val sharedTxIn = sharedInput_opt.map(i => (i.serialId, TxIn(i.outPoint, ByteVector.empty, i.sequence, sharedSigs_opt.getOrElse(ScriptWitness.empty)))).toSeq
       // LSP 측은 자기 swap-in input 을 contribute 하지 않으므로 localInputs 는 모두 non-swap-in 으로 간주.
       val localTxIn = localInputs.sortBy(_.serialId).zip(localSigs.witnesses).map { case (i, w) => (i.serialId, TxIn(i.outPoint, ByteVector.empty, i.sequence, w)) }
-      // remote inputs 를 swap-in 여부로 partition.
+      // remote inputs 를 swap-in 여부 (taproot/legacy) 로 partition.
       val swapInSerialIds: Set[UInt64] = swapInParams.map(_._1).toSet
-      val (remoteSwapInputs, remoteOnlyInputs) = remoteInputs.partition(i => swapInSerialIds.contains(i.serialId))
+      val swapInLegacySerialIds: Set[UInt64] = swapInParamsLegacy.map(_._1).toSet
+      val (remoteSwapInputs, remoteAfterTaproot) = remoteInputs.partition(i => swapInSerialIds.contains(i.serialId))
+      val (remoteSwapInputsLegacy, remoteOnlyInputs) = remoteAfterTaproot.partition(i => swapInLegacySerialIds.contains(i.serialId))
       val remoteOnlyTxIn = remoteOnlyInputs.sortBy(_.serialId).zip(remoteSigs.witnesses).map { case (i, w) => (i.serialId, TxIn(i.outPoint, ByteVector.empty, i.sequence, w)) }
       // KMP 컨벤션: swap-in psigs 는 serialId 순서로 wire 에 실린다고 간주. LSP 측 server psig 도 동일 컨벤션으로 생성한다 (signTx 단계에서 정렬).
       val sortedSwapParams = swapInParams.sortBy(_._1)
@@ -415,7 +418,23 @@ object InteractiveTxBuilder {
               }
           }
         } else Nil
-      val inputs = (sharedTxIn ++ localTxIn ++ remoteOnlyTxIn ++ remoteSwapTxIn).sortBy(_._1).map(_._2)
+      // Legacy swap-in: P2WSH 2-of-2 witness = [serverSig, userSig, redeemScript] via SwapInProtocolLegacy.
+      // user ECDSA sigs come from remoteSigs (SwapInUserSigs TLV); server ECDSA sigs from localSigs (SwapInServerSigs TLV).
+      val sortedSwapParamsLegacy = swapInParamsLegacy.sortBy(_._1)
+      val remoteUserSigsLegacy = remoteSigs.tlvStream.records.collect { case r: TxSignaturesTlv.SwapInUserSigs => r.sigs }.flatten.toList
+      val localServerSigsLegacy = localSigs.tlvStream.records.collect { case r: TxSignaturesTlv.SwapInServerSigs => r.sigs }.flatten.toList
+      val remoteSwapLegacyTxIn: Seq[(UInt64, TxIn)] =
+        if (sortedSwapParamsLegacy.size == remoteUserSigsLegacy.size && sortedSwapParamsLegacy.size == localServerSigsLegacy.size) {
+          sortedSwapParamsLegacy.zip(remoteUserSigsLegacy).zip(localServerSigsLegacy).flatMap {
+            case (((serialId, params), userSig), serverSig) =>
+              remoteSwapInputsLegacy.find(_.serialId == serialId).map { input =>
+                val protocol = fr.acinq.eclair.transactions.SwapInProtocolLegacy(params.userKey, params.serverKey, params.refundDelay)
+                val w = protocol.witness(userSig, serverSig)
+                (serialId, TxIn(input.outPoint, ByteVector.empty, input.sequence, w))
+              }
+          }
+        } else Nil
+      val inputs = (sharedTxIn ++ localTxIn ++ remoteOnlyTxIn ++ remoteSwapTxIn ++ remoteSwapLegacyTxIn).sortBy(_._1).map(_._2)
       val sharedTxOut = (sharedOutput.serialId, TxOut(sharedOutput.amount, sharedOutput.pubkeyScript))
       val localTxOut = localOutputs.map(o => (o.serialId, TxOut(o.amount, o.pubkeyScript)))
       val remoteTxOut = remoteOutputs.map(o => (o.serialId, TxOut(o.amount, o.pubkeyScript)))
@@ -718,17 +737,27 @@ private class InteractiveTxBuilder(replyTo: ActorRef[InteractiveTxBuilder.Respon
             case Right(input) =>
               val swapInEntry = addInput.tlvStream.get[TxAddInputTlv.SwapInParams]
                 .map(p => addInput.serialId -> p).toSeq
+              val swapInEntryLegacy = addInput.tlvStream.get[TxAddInputTlv.SwapInParamsLegacy]
+                .map(p => addInput.serialId -> p).toSeq
               if (swapInEntry.nonEmpty) {
                 log.info("swap-in: received swap-in input serialId={} userKey={} serverKey={}",
                   addInput.serialId,
                   swapInEntry.head._2.userKey,
                   swapInEntry.head._2.serverKey)
               }
+              if (swapInEntryLegacy.nonEmpty) {
+                log.info("swap-in (legacy): received swap-in input serialId={} userKey={} serverKey={} refundDelay={}",
+                  addInput.serialId,
+                  swapInEntryLegacy.head._2.userKey,
+                  swapInEntryLegacy.head._2.serverKey,
+                  swapInEntryLegacy.head._2.refundDelay.toString)
+              }
               val next = session.copy(
                 remoteInputs = session.remoteInputs :+ input,
                 inputsReceivedCount = session.inputsReceivedCount + 1,
                 txCompleteReceived = None,
                 swapInInputs = session.swapInInputs ++ swapInEntry,
+                swapInInputsLegacy = session.swapInInputsLegacy ++ swapInEntryLegacy,
               )
               send(next)
           }
@@ -1114,11 +1143,44 @@ private class InteractiveTxBuilder(replyTo: ActorRef[InteractiveTxBuilder.Respon
       } else Nil
     }
 
+    // Legacy swap-in (P2WSH 2-of-2 multisig, ECDSA). No nonces needed — simpler than taproot.
+    val swapInServerLegacySigs: Seq[ByteVector64] = {
+      if (session.swapInInputsLegacy.nonEmpty) {
+        val sortedLegacy = session.swapInInputsLegacy.sortBy { case (serialId, _) => serialId }
+        sortedLegacy.flatMap { case (serialId, params) =>
+          unsignedTx.remoteInputs.find(_.serialId == serialId).flatMap { remoteInput =>
+            val inputIndex = tx.txIn.indexWhere(_.outPoint == remoteInput.outPoint)
+            val serverPrivateKey = nodeParams.nodeKeyManager.deriveSwapInServerKey(remoteNodeId)
+            val protocol = SwapInProtocolLegacy(params.userKey, params.serverKey, params.refundDelay)
+            log.warn(s"[A1-DBG-LEGACY] swap-in legacy serverPub-derived=${serverPrivateKey.publicKey} params.serverKey=${params.serverKey} match=${serverPrivateKey.publicKey == params.serverKey}")
+            log.warn(s"[A1-DBG-LEGACY] swap-in legacy userKey=${params.userKey} refundDelay=${params.refundDelay} inputIndex=$inputIndex")
+            try {
+              val sig = protocol.signSwapInputServer(tx, inputIndex, remoteInput.txOut, serverPrivateKey)
+              log.info("swap-in (legacy): successfully generated server ECDSA signature for input {}", remoteInput.outPoint)
+              Some(sig)
+            } catch {
+              case e: Throwable =>
+                log.error("swap-in (legacy): failed to generate server ECDSA signature for input {}: {}", remoteInput.outPoint, e.getMessage)
+                None
+            }
+          }
+        }
+      } else Nil
+    }
+
+    // Helper: wrap TxSignatures with both taproot + legacy server sigs added to tlvStream.
+    def buildTxSignatures(channelId: ByteVector32, signed: Transaction, witnesses: Seq[ScriptWitness], previousFundingSig_opt: Option[ChannelSpendSignature]): TxSignatures = {
+      val baseTxSig = TxSignatures.apply(channelId, signed, witnesses, previousFundingSig_opt, swapInServerPartialSigs)
+      if (swapInServerLegacySigs.nonEmpty) {
+        baseTxSig.copy(tlvStream = TlvStream(baseTxSig.tlvStream.records + TxSignaturesTlv.SwapInServerSigs(swapInServerLegacySigs.toList)))
+      } else baseTxSig
+    }
+
     sharedSig_opt match {
       case Left(f) =>
         context.self ! WalletFailure(f)
       case Right(sharedSig_opt) if unsignedTx.localInputs.isEmpty =>
-        context.self ! SignTransactionResult(PartiallySignedSharedTransaction(unsignedTx, TxSignatures.apply(fundingParams.channelId, tx, Seq.empty, sharedSig_opt, swapInServerPartialSigs), session.swapInInputs))
+        context.self ! SignTransactionResult(PartiallySignedSharedTransaction(unsignedTx, buildTxSignatures(fundingParams.channelId, tx, Seq.empty, sharedSig_opt), session.swapInInputs, session.swapInInputsLegacy))
       case Right(sharedSig_opt) =>
         // We track our wallet inputs and outputs, so we can verify them when we sign the transaction: if Eclair is managing bitcoin core wallet keys, it will
         // only sign our wallet inputs, and check that it can re-compute private keys for our wallet outputs.
@@ -1152,7 +1214,7 @@ private class InteractiveTxBuilder(replyTo: ActorRef[InteractiveTxBuilder.Respon
             }.sum
             require(actualLocalAmountOut == expectedLocalAmountOut, s"local output amount $actualLocalAmountOut does not match what we expect ($expectedLocalAmountOut): bitcoin core may be malicious")
             val sigs = partiallySignedTx.txIn.filter(txIn => localOutpoints.contains(txIn.outPoint)).map(_.witness)
-            PartiallySignedSharedTransaction(unsignedTx, TxSignatures.apply(fundingParams.channelId, partiallySignedTx, sigs, sharedSig_opt, swapInServerPartialSigs), session.swapInInputs)
+            PartiallySignedSharedTransaction(unsignedTx, buildTxSignatures(fundingParams.channelId, partiallySignedTx, sigs, sharedSig_opt), session.swapInInputs, session.swapInInputsLegacy)
         }) {
           case Failure(t) => WalletFailure(t)
           case Success(signedTx) => SignTransactionResult(signedTx)
@@ -1238,8 +1300,10 @@ object InteractiveTxSigningSession {
       return Left(InvalidFundingSignature(fundingParams.channelId, Some(partiallySignedTx.txId)))
     }
     val remoteSwapInSigs = remoteSigs.tlvStream.records.collect { case r: fr.acinq.eclair.wire.protocol.TxSignaturesTlv.SwapInUserPartialSigs => r.psigs }.flatten
-    if (partiallySignedTx.tx.remoteInputs.length != (remoteSigs.witnesses.length + remoteSwapInSigs.size)) {
-      log.info("invalid tx_signatures: witness count mismatch (expected={}, got={}+{} swap-in)", partiallySignedTx.tx.remoteInputs.length, remoteSigs.witnesses.length, remoteSwapInSigs.size)
+    val remoteSwapInUserSigsLegacy = remoteSigs.tlvStream.records.collect { case r: fr.acinq.eclair.wire.protocol.TxSignaturesTlv.SwapInUserSigs => r.sigs }.flatten
+    if (partiallySignedTx.tx.remoteInputs.length != (remoteSigs.witnesses.length + remoteSwapInSigs.size + remoteSwapInUserSigsLegacy.size)) {
+      log.info("invalid tx_signatures: witness count mismatch (expected={}, got={}+{} swap-in taproot+{} swap-in legacy)",
+        partiallySignedTx.tx.remoteInputs.length, remoteSigs.witnesses.length, remoteSwapInSigs.size, remoteSwapInUserSigsLegacy.size)
       remoteSigs.tlvStream.unknown.foreach(tlv => log.info("received unknown TLV in tx_signatures: tag={} value={}", tlv.tag, tlv.value.toHex))
       return Left(InvalidFundingSignature(fundingParams.channelId, Some(partiallySignedTx.txId)))
     }
@@ -1267,7 +1331,7 @@ object InteractiveTxSigningSession {
         case Right(signedTx) => signedTx.txIn(spliceTx.inputIndex).witness
       }
     })
-    val txWithSigs = FullySignedSharedTransaction(partiallySignedTx.tx, partiallySignedTx.localSigs, remoteSigs, sharedSigs_opt, partiallySignedTx.swapInParams)
+    val txWithSigs = FullySignedSharedTransaction(partiallySignedTx.tx, partiallySignedTx.localSigs, remoteSigs, sharedSigs_opt, partiallySignedTx.swapInParams, partiallySignedTx.swapInParamsLegacy)
     if (remoteSigs.txId != txWithSigs.signedTx.txid) {
       log.info("invalid tx_signatures: txId mismatch (expected={}, got={})", txWithSigs.signedTx.txid, remoteSigs.txId)
       return Left(InvalidFundingSignature(fundingParams.channelId, Some(partiallySignedTx.txId)))
