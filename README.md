@@ -56,3 +56,29 @@ nohup ./eclair-node.sh /root/.eclair/plugins/channel-funding-plugin-0.13.1.jar \
 
 ## 전체 구조
 `SAVEL_LN.md` 참조 (레포 루트).
+
+---
+
+## 260521OFFBOLT12 추가 변경 (이번 브랜치)
+
+**BOLT12 offer 의 오프라인 수신** 을 가능하게 하기 위한 LSP 측 변경. 폰 B 가 백그라운드/종료 상태이어도 폰 A 가 BOLT12 offer 주소로 송금하면 push 로 깨워서 자동 결제 도착.
+
+### 변경 파일
+
+| 파일 | 변경 |
+|---|---|
+| `io/Peer.scala` | tag 35017 (FCMToken) 의 silent-accept 제거 → 토큰 파싱 + EventStream publish. tag 35019 (UnsetFCMToken) 핸들러도 추가. |
+| `io/PeerEvents.scala` | 새 이벤트 3종: `FcmTokenRegistered`, `FcmTokenUnregistered`, `WakeUpPeerRequested` |
+| `io/PeerReadyNotifier.scala` | `waitForPeerConnected` 진입 시 `WakeUpPeerRequested` publish — fcm-push-plugin 이 이걸 받아 FCM push 발사 |
+| `payment/relay/NodeRelay.scala` | dev-bypass(`walletNodeId_opt = Some(...)` 강제) 를 ACINQ 원본 feature-gated 로직으로 복원. 추가로 `attemptWakeUp` 호출 두 곳에 `&& false` 가드 — NodeRelay 측 wake-up 분기는 차단하고 MessageRelay 측만 켠다 (sender-side reserve violation 으로 인한 force-close 차단). |
+
+### 동반 운영 설정
+
+- `eclair.conf` 에 `eclair.peer-wake-up { enabled = true; timeout = 30 seconds }` 추가
+- plugin 두 개 같이 로드: `channel-funding-plugin`, `fcm-push-plugin` (별도 레포)
+
+### 검증된 시나리오
+
+L1→swap-in(taproot/legacy), Request Liquidity, 폰A→폰B(online) BOLT11/BOLT12, 폰A→폰B(offline) BOLT12, mutual close, force close 모두 정상.
+
+자세한 흐름 / 원리 / 사고 사례는 `260521OFFBOLT12.md` 참조 (LightningEver 메인 문서 폴더).
