@@ -630,6 +630,28 @@ class Peer(val nodeParams: NodeParams,
         log.info("FCMToken unset by {}", remoteNodeId)
         context.system.eventStream.publish(FcmTokenUnregistered(remoteNodeId))
         stay()
+      case Event(unknownMsg: UnknownMessage, d: ConnectedData) if unknownMsg.tag == 35021 =>
+        // [LightningEver] SwapInAddressRegister: wallet pre-registers its swap-in addresses so we
+        // can watch L1 for offline deposits. Wire = [u16 count] then for each: [u16 len][len bytes ASCII].
+        val data = unknownMsg.data
+        try {
+          val cursor = new java.util.concurrent.atomic.AtomicInteger(0)
+          def readU16(): Int = {
+            val pos = cursor.getAndAdd(2)
+            ((data(pos) & 0xff) << 8) | (data(pos + 1) & 0xff)
+          }
+          val count = readU16()
+          val addrs = (0 until count).map { _ =>
+            val len = readU16()
+            val pos = cursor.getAndAdd(len)
+            new String(data.slice(pos, pos + len).toArray, java.nio.charset.StandardCharsets.UTF_8)
+          }.toList
+          log.info("SwapInAddressRegister from {}: {} addresses (first={})", remoteNodeId, addrs.size, addrs.headOption.getOrElse("<empty>"))
+          context.system.eventStream.publish(SwapInAddressesRegistered(remoteNodeId, addrs))
+        } catch {
+          case ex: Throwable => log.warning("invalid SwapInAddressRegister from {}: {}", remoteNodeId, ex.getMessage)
+        }
+        stay()
       case Event(unknownMsg: UnknownMessage, d: ConnectedData) if nodeParams.pluginMessageTags.contains(unknownMsg.tag) =>
         context.system.eventStream.publish(UnknownMessageReceived(self, remoteNodeId, unknownMsg, d.connectionInfo))
         stay()

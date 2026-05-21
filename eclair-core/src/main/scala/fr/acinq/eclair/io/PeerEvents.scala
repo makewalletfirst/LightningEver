@@ -47,6 +47,13 @@ case class FcmTokenRegistered(nodeId: PublicKey, token: String, platform: String
 case class FcmTokenUnregistered(nodeId: PublicKey) extends PeerEvent
 
 /**
+ * [LightningEver] Wallet pre-registered its swap-in addresses (lightning message tag 35021).
+ * Used by fcm-push-plugin to monitor L1 for deposits while the wallet is offline and wake it up
+ * with a push when a deposit lands.
+ */
+case class SwapInAddressesRegistered(nodeId: PublicKey, addresses: List[String]) extends PeerEvent
+
+/**
  * Emitted by [[PeerReadyNotifier]] when it is asked to wait for a peer that is not currently connected.
  * Push-notification plugins (e.g. fcm-push-plugin) subscribe to this and send a wake-up notification
  * so that mobile clients reconnect within the wake-up timeout window.

@@ -82,3 +82,22 @@ nohup ./eclair-node.sh /root/.eclair/plugins/channel-funding-plugin-0.13.1.jar \
 L1→swap-in(taproot/legacy), Request Liquidity, 폰A→폰B(online) BOLT11/BOLT12, 폰A→폰B(offline) BOLT12, mutual close, force close 모두 정상.
 
 자세한 흐름 / 원리 / 사고 사례는 `260521OFFBOLT12.md` 참조 (LightningEver 메인 문서 폴더).
+
+---
+
+## 260522_OFFSWAPIN 추가 변경 (이 브랜치)
+
+**오프라인 스왑인 입금 자동 감지** — 폰이 swap-in 주소를 발급한 후 앱을 켜두지 않아도 LSP 가 L1 입금을 감지하고 폰을 깨워 자동으로 채널을 생성하는 흐름. 폰 측 wire 메시지 (KMP 변경) + LSP 측 수신 핸들러를 추가.
+
+### 변경 파일
+
+| 파일 | 변경 |
+|---|---|
+| `io/Peer.scala` | 신규 사설 tag **35021** (`SwapInAddressRegister`) 핸들러. wire 페이로드 `[u16 count] [u16 len][len bytes ASCII]*` 파싱 후 `SwapInAddressesRegistered` EventStream publish |
+| `io/PeerEvents.scala` | 새 이벤트 `SwapInAddressesRegistered(nodeId, addresses: List[String])` 추가 |
+
+### 운영 메모
+
+- LSP 의 fcm-push-plugin 측 EventStream 구독은 **일시 비활성** (BOLT12 offline 결제와 동시 발동 시 channel reserve violation 으로 force-close 재현됐기 때문). 폰이 35021 메시지를 보내도 LSP 가 receive 한 뒤 publish 까지만 하고 그 뒤 처리하지 않는다.
+- 안전 가드 추가 + 검증 완료 후 fcm-push-plugin 의 subscribe 한 줄을 복원하면 자동 동작.
+- 자세한 흐름 / 원인 / 운영 결정은 LightningEver 프로젝트의 `260522FCM.md` 참조.
