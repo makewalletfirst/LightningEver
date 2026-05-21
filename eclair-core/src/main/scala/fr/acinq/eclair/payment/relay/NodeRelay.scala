@@ -283,7 +283,13 @@ class NodeRelay private(nodeParams: NodeParams,
               val blindedNodeId = resolved.head.route.blindedNodeIds.last
               val recipient = BlindedRecipient.fromPaths(blindedNodeId, Features(payloadOut.invoiceFeatures).invoiceFeatures(), payloadOut.amountToForward, payloadOut.outgoingCltv, resolved, Set.empty)
               resolved.head.route match {
-                case BlindedPathsResolver.PartialBlindedRoute(walletNodeId: EncodedNodeId.WithPublicKey.Wallet, _, _) if nodeParams.peerWakeUpConfig.enabled =>
+                case BlindedPathsResolver.PartialBlindedRoute(walletNodeId: EncodedNodeId.WithPublicKey.Wallet, _, _) if nodeParams.peerWakeUpConfig.enabled && false =>
+                  // [LightningEver 2026-05-21] Wake-up disabled in NodeRelay (HTLC path).
+                  // BOLT12 offline receive is handled by MessageRelay (onion-message path) only:
+                  // invoice_request wakes phone B → phone B issues invoice → phone A sends HTLC
+                  // while phone B is already online → plain relay below succeeds. Letting
+                  // NodeRelay also call attemptWakeUp + on-the-fly funding had triggered a
+                  // reverse-HTLC reserve-violation force-close on the sender's channel.
                   context.log.debug("forwarding payment to blinded peer {}", walletNodeId.publicKey)
                   attemptWakeUp(upstream, walletNodeId.publicKey, recipient, nextPayload, nextPacket_opt)
                 case BlindedPathsResolver.PartialBlindedRoute(nextNodeId: EncodedNodeId.WithPublicKey, _, _) =>
@@ -322,7 +328,11 @@ class NodeRelay private(nodeParams: NodeParams,
             if (features.hasFeature(Features.WakeUpNotificationClient)) Some(recipient.nodeId) else None
           }
           walletNodeId_opt match {
-            case Some(walletNodeId) if nodeParams.peerWakeUpConfig.enabled => attemptWakeUp(upstream, walletNodeId, recipient, nextPayload, nextPacket_opt)
+            // [LightningEver 2026-05-21] Wake-up disabled in NodeRelay (HTLC path) — see the
+            // matching comment in the blinded-route branch above. `&& false` is intentional and
+            // documents that we want the guard to look correct (peerWakeUpConfig.enabled is the
+            // master switch in MessageRelay) but never fire here.
+            case Some(walletNodeId) if nodeParams.peerWakeUpConfig.enabled && false => attemptWakeUp(upstream, walletNodeId, recipient, nextPayload, nextPacket_opt)
             case _ => relay(upstream, recipient, walletNodeId_opt, None, nextPayload, nextPacket_opt)
           }
       }
