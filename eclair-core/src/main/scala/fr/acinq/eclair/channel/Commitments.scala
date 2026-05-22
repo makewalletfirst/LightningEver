@@ -1159,7 +1159,16 @@ case class Commitments(channelParams: ChannelParams,
     val sigs = commitSigs match {
       case batch: CommitSigBatch if batch.batchSize < active.size => return Left(CommitSigCountMismatch(channelId, active.size, batch.batchSize))
       case batch: CommitSigBatch => batch.messages
-      case _: CommitSig if active.size > 1 => return Left(CommitSigCountMismatch(channelId, active.size, 1))
+      // [LightningEver DEV-BYPASS] On-the-fly funding fee 부족으로 발생하는 splice race:
+      // 폰 A가 BOLT12로 채널 없는 폰 B에게 송금 시도. 송금액이 LSP 의 채널 개설 fee 보다 작으면
+      // KMP 가 splice abort 시도하지만 LSP 는 이미 splice 협상 끝나 새 commitment 로 진행 →
+      // active funding 2개 상태. 그러나 폰 A 는 자기 측에서 splice 가 abort 됐다고 인식 →
+      // CommitSig 1개만 보냄 → 본래 동작은 force-close, 그러나 폰 A 입장에서는 "수수료 부족"
+      // 단순 fail 이 적절. 여기서는 받은 1개의 sig 를 latest active commitment 에 적용하고
+      // 결제는 자연스럽게 HTLC fail 흐름으로 떨어지게 한다. 채널은 그대로 유지.
+      case commitSig: CommitSig if active.size > 1 =>
+        log.warning("commit sig count mismatch bypassed: expected={} actual=1 — applying to latest active commitment to avoid force-close on insufficient fee", active.size)
+        Seq(commitSig)
       case commitSig: CommitSig => Seq(commitSig)
     }
     // Signatures are sent in order (most recent first), calling `zip` will drop trailing sigs that are for deactivated/pruned commitments.

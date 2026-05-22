@@ -101,3 +101,34 @@ L1→swap-in(taproot/legacy), Request Liquidity, 폰A→폰B(online) BOLT11/BOLT
 - LSP 의 fcm-push-plugin 측 EventStream 구독은 **일시 비활성** (BOLT12 offline 결제와 동시 발동 시 channel reserve violation 으로 force-close 재현됐기 때문). 폰이 35021 메시지를 보내도 LSP 가 receive 한 뒤 publish 까지만 하고 그 뒤 처리하지 않는다.
 - 안전 가드 추가 + 검증 완료 후 fcm-push-plugin 의 subscribe 한 줄을 복원하면 자동 동작.
 - 자세한 흐름 / 원인 / 운영 결정은 LightningEver 프로젝트의 `260522FCM.md` 참조.
+
+---
+
+## 260523 추가 변경 (이 브랜치)
+
+**Commit sig count mismatch 시 force-close 차단** — 채널 없는 폰에 BOLT12 송금 시 송금액이 LSP 채널 개설 fee 보다 작은 경우 발생하던 race condition 으로 인한 sender 측 force-close 를 막는다.
+
+### 시나리오
+
+폰A → 채널 없는 폰B BOLT12 10K sat 송금 시도:
+1. LSP 가 폰A 채널에 splice 형식으로 fee 추가 협상 시작 (on-the-fly funding)
+2. 양측 splice tx 협상 완료 (TxComplete)
+3. KMP 가 fee 부족 인지하고 `TxAbort("splice aborted")` 보냄 — 그러나 LSP 는 이미 협상 끝
+4. LSP active funding 2개 vs 폰A 의 CommitSig 1개 → 본래 동작은 `CommitSigCountMismatch` → force-close
+5. 사용자 입장에서는 단순 "수수료 부족" 결제 실패가 적절
+
+### 변경 파일
+
+- `eclair-core/src/main/scala/fr/acinq/eclair/channel/Commitments.scala` (line 1162 부근)
+  - `case _: CommitSig if active.size > 1 => return Left(CommitSigCountMismatch(...))` 를 BYPASS 로 교체
+  - CommitSig 1개를 latest active commitment 에 적용 (force-close 회피)
+  - 결제는 자연스럽게 HTLC fail 흐름으로 떨어져 폰A UI 에 "결제 실패" 표시
+  - 채널은 NORMAL 상태 그대로 유지
+
+### 검증
+
+폰 시연으로 확인:
+- 10K sat 송금 (LSP fee 미달) → 깨끗한 fail, force-close 없음
+- 100K sat 송금 (LSP fee 충분) → 정상 결제
+
+이전 brnach `260522_OFFSWAPIN` 의 모든 변경 포함.
