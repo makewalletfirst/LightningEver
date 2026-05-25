@@ -38,3 +38,27 @@ case class LastChannelClosed(peer: ActorRef, nodeId: PublicKey) extends PeerEven
 case class PongReceived(nodeId: PublicKey, latency: FiniteDuration) extends PeerEvent
 
 case class UnknownMessageReceived(peer: ActorRef, nodeId: PublicKey, message: UnknownMessage, connectionInfo: ConnectionInfo) extends PeerEvent
+
+/** Phoenix FCM token (lightning message tag 35017). Published on the EventStream so plugins
+ *  (e.g. fcm-push-plugin) can keep a peer_nodeId → token map and send push notifications. */
+case class FcmTokenRegistered(nodeId: PublicKey, token: String, platform: String) extends PeerEvent
+
+/** Phoenix UnsetFCMToken (lightning message tag 35019). The peer wants to stop receiving pushes. */
+case class FcmTokenUnregistered(nodeId: PublicKey) extends PeerEvent
+
+/**
+ * [LightningEver] Wallet pre-registered its swap-in addresses (lightning message tag 35021).
+ * Used by fcm-push-plugin to monitor L1 for deposits while the wallet is offline and wake it up
+ * with a push when a deposit lands.
+ */
+case class SwapInAddressesRegistered(nodeId: PublicKey, addresses: List[String]) extends PeerEvent
+
+/**
+ * Emitted by [[PeerReadyNotifier]] when it is asked to wait for a peer that is not currently connected.
+ * Push-notification plugins (e.g. fcm-push-plugin) subscribe to this and send a wake-up notification
+ * so that mobile clients reconnect within the wake-up timeout window.
+ *
+ * @param reason short label describing the origin of the wake-up request (e.g. "OnionMessage",
+ *               "TrampolinePayment") — used as the FCM `reason` field so the wallet can act on it.
+ */
+case class WakeUpPeerRequested(nodeId: PublicKey, reason: String) extends PeerEvent

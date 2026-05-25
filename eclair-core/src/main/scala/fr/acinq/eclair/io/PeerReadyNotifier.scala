@@ -239,6 +239,12 @@ private class PeerReadyNotifier(replyTo: ActorRef[PeerReadyNotifier.Result],
   }
 
   private def waitForPeerConnected(switchboard: ActorRef[Switchboard.GetPeerInfo]): Behavior[Command] = {
+    // [LightningEver] Publish a wake-up request so that push-notification plugins can wake a mobile
+    // peer that is currently disconnected. Idempotent — if the peer turns out to already be connected,
+    // the plugin's push is harmless (the FCM message is dropped if the wallet's app is already foreground).
+    context.system.eventStream ! akka.actor.typed.eventstream.EventStream.Publish(
+      fr.acinq.eclair.io.WakeUpPeerRequested(remoteNodeId, reason = "PeerReadyNotifier")
+    )
     val peerInfoAdapter = context.messageAdapter[Peer.PeerInfoResponse] {
       // We receive this when we don't have any channel to the given peer and are not currently connected to them.
       // In that case we still want to wait for a connection, because we may want to open a channel to them.
