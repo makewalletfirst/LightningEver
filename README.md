@@ -202,3 +202,7 @@ curl -s -u :bitever -X POST http://localhost:8080/peers | jq .
 # Live stream LSP node logs
 tail -f /root/.eclair/eclair.log
 ```
+
+## 8. Modifications (2026-06-08)
+- **Max HTLC In-Flight Limit Uplifted**: Increased `max-htlc-value-in-flight-percent` to 100% in the `eclair.conf` configuration to prevent routing failures when transferring payments exceeding 500k satoshis.
+
