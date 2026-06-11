@@ -32,12 +32,10 @@ case class SwapInProtocol(userPublicKey: PublicKey, serverPublicKey: PublicKey, 
   private val witnessLog = org.slf4j.LoggerFactory.getLogger("A1-WITNESS")
 
   def witness(fundingTx: Transaction, index: Int, parentTxOuts: Seq[TxOut], userNonce: IndividualNonce, serverNonce: IndividualNonce, userPartialSig: ByteVector32, serverPartialSig: ByteVector32): Either[Throwable, ScriptWitness] = {
-    // KMP 방식과 동일: key sorted order로 nonces와 sigs 정렬 후 aggregate
-    val publicNonces = Scripts.sortNonces(Seq(userPublicKey -> userNonce, serverPublicKey -> serverNonce))
-    val sigs = Seq(userPublicKey -> userPartialSig, serverPublicKey -> serverPartialSig)
-      .sortWith { case ((k1, _), (k2, _)) => fr.acinq.bitcoin.scalacompat.LexicographicalOrdering.isLessThan(k1.value, k2.value) }
-      .map(_._2)
-    val result = Musig2.aggregateTaprootSignatures(sigs, fundingTx, index, parentTxOuts, sortedKeys, publicNonces, Some(scriptTree))
+    val publicKeys = Seq(userPublicKey, serverPublicKey)
+    val publicNonces = Seq(userNonce, serverNonce)
+    val sigs = Seq(userPartialSig, serverPartialSig)
+    val result = Musig2.aggregateTaprootSignatures(sigs, fundingTx, index, parentTxOuts, publicKeys, publicNonces, Some(scriptTree))
     result match {
       case Left(err) =>
         witnessLog.error(s"[A1-WITNESS] aggregateTaprootSignatures FAILED: ${err.getMessage} | txid=${fundingTx.txid} idx=$index | userKey=${userPublicKey.toString.take(16)} serverKey=${serverPublicKey.toString.take(16)} | userSig=${userPartialSig.toHex.take(16)} serverSig=${serverPartialSig.toHex.take(16)}")

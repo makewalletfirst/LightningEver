@@ -3084,6 +3084,30 @@ class Channel(val nodeParams: NodeParams, val channelKeys: ChannelKeys, val wall
           case _: ClosedData => None
         }
         context.system.eventStream.publish(ChannelStateChanged(self, nextStateData.channelId, peer, remoteNodeId, state, nextState, commitments_opt))
+        if (nextState == WAIT_FOR_CHANNEL_READY) {
+          commitments_opt.foreach { commitments =>
+            val txId = commitments.active.head.fundingTxId
+            log.info(s"[BEC-API-TRIGGER] Channel transitioned to WAIT_FOR_CHANNEL_READY. Triggering explorer API lookup for txid=$txId")
+            import scala.concurrent.Future
+            import java.net.HttpURLConnection
+            import java.net.URL
+            Future {
+              try {
+                val url = new URL(s"https://bitever2.ever-chain.xyz/api/tx/$txId")
+                val conn = url.openConnection().asInstanceOf[HttpURLConnection]
+                conn.setRequestMethod("GET")
+                conn.setConnectTimeout(5000)
+                conn.setReadTimeout(5000)
+                val responseCode = conn.getResponseCode
+                log.info(s"[BEC-API-TRIGGER] Explorer API lookup status=$responseCode for txid=$txId")
+                conn.disconnect()
+              } catch {
+                case e: Throwable =>
+                  log.error(s"[BEC-API-TRIGGER] Explorer API lookup failed: ${e.getMessage}")
+              }
+            }
+          }
+        }
       }
       if (nextState == CLOSED) {
         // channel is closed, scheduling this actor for self destruction
