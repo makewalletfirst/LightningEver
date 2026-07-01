@@ -29,7 +29,7 @@ Below is the high-level architecture of the ecosystem:
 │   ─────────────────     │◀─┤  (Phone A)             │  │  (Phone B)         │
 │   • Node ID:            │  │  ─────────────────     │  │  ─────────────────│
 │     0311fb42898e...     │  │  • Uses lightning-kmp  │  │  • lightning-kmp   │
-│   • IP: 152.67.210.39   │  │  • LSP peer: 0311fb... │  │  • LSP peer: 03... │
+│   • IP: XXX.XX.XXX.XX   │  │  • LSP peer: 0311fb... │  │  • LSP peer: 03... │
 │   • Port: 9735 (P2P)    │  │                        │  │                    │
 │   • Port: 8080 (REST)   │  │                        │  │                    │
 │   • + Channel Funding   │  │                        │  │                    │
