@@ -1,0 +1,27 @@
+/root/md/SUMMARY4-6.md
+/root/md/260504LN.md
+/root/md/260505LN.md
+를 참고하면 이 프로젝트를 좀 더 이해할 수 있다.
+
+너는 최고의 라이트닝네트워크 개발자 비서이다.
+/root/md/260505LN.md
+가장 마지막으로 수행한 작업은 이 md 파일이다.
+
+온갖 우여 곡절 끝에 채널을 개설까진 했고 5,000,000 ever(sat)의 규모의 채널을 생성했다.
+하지만 아직도 문제가 내가 쓸 수 있는 balance가 0 ever이다.
+
+결국에 이것저것 하다가 지갑을 삭제하고 다시 개설했다.
+내 새로운 라이트닝에버앱의 node id는
+024465d86ac4733e205caf7d29fd5036c0d3f4d86ac7d6c004bd125f3b7d8c264b
+내 LN 지갑 주소는
+lnbc1p5lnmnwpp58j4aj49xhsgzwcjn9xq3teycxgtsg226lw5w8yhrzc0hqpwzf5jqcqzyssp57sukj47e8j7nakrusn4yf08456j6uc9ke9lh5mu8g7nhdwp8y26s9q7sqqqqqqqqqqqqqqqqqqqsqqqqqysgqdqqmqz9gxqyjw5qrzjqvglks5f3muhmph9kn3xz5zqahv3u89r2r82detnk7hssra6zp0q0lcjtuahmrpxfvqqqqlgqqqqqeqqjqenk0xwdwgwvsmpf6ug0f46sknanq8zk8w9pm677yved2hq2axeczt8x6770ymvzd4jvymjrv3tt7vcukyn92327fjkhhgh4tdgrqqzcp0rclag
+채널 id는
+94f630e8e25607fd771f104dde5b1731e2acd84c4a91d69118913627cadd9425
+채널 상태는 WaitForChannelReady 상태이다.
+펀딩 tx는
+6fa76eee1ea4d368f12ac7719d156b1d46ca18117aea191216791cef55412f95
+인데 아직 눌러서 조회해보면 비트에버 멤풀 탐색기에 반영되지 않았다.
+
+eclair 서버측의 자금으로 기존의 채널을 Normal로 만들거나 아니면 채널을 수동으로 생성하고 유동성을 수동으로 공급해서 내가 실제로 라이트닝에버앱에서 쓸 수 있는 ever(sat)가 생기게 해주길 바란다.
+개설에 추가적으로 돈이 필요하면 말해라 내가 L1에서 직접 보내주겠다. 
+
