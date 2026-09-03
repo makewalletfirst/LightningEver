@@ -1,0 +1,52 @@
+name: Latest Bitcoin Core
+
+on:
+  workflow_dispatch: # Build can be triggered manually from github.com
+  schedule:
+    # Run at midnight on Sunday and Wednesday.
+    - cron: '0 0 * * 0,3'
+
+permissions:
+  contents: read
+
+jobs:
+
+  regression-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout bitcoind master
+        uses: actions/checkout@v3
+        with:
+          repository: bitcoin/bitcoin
+          path: bitcoin
+
+      - name: Install bitcoind dependencies
+        run: sudo apt-get install build-essential cmake pkg-config bsdmainutils python3 libevent-dev libboost-dev libminiupnpc-dev libnatpmp-dev libzmq3-dev libsqlite3-dev systemtap-sdt-dev
+        working-directory: ./bitcoin
+
+      - name: Init and configure cmake build
+        run: cmake -B build -DWITH_ZMQ=ON -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCH=OFF
+        working-directory: ./bitcoin
+
+      - name: Build bitcoind
+        run: cmake --build build "-j $(($(nproc)))"
+        working-directory: ./bitcoin
+
+      - name: Checkout eclair master
+        uses: actions/checkout@v3
+        with:
+          path: eclair
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v3
+        with:
+          java-version: 21
+          distribution: 'adopt'
+
+      - name: Configure OS settings
+        run: echo "fs.file-max = 1024000" | sudo tee -a /etc/sysctl.conf
+
+      - name: Run eclair tests
+        run: BITCOIND_DIR=$GITHUB_WORKSPACE/bitcoin/build/bin ./mvnw test
+        working-directory: ./eclair
