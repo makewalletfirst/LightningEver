@@ -1,0 +1,23 @@
+[
+  {
+    "Description": "Identified a HashiCorp Terraform password field, risking unauthorized infrastructure configuration and security breaches.",
+    "StartLine": 22,
+    "EndLine": 23,
+    "StartColumn": 21,
+    "EndColumn": 1,
+    "Match": "password = \"mypassword\"",
+    "Secret": "\"mypassword\"",
+    "File": "docs/PostgreSQL.md",
+    "SymlinkFile": "",
+    "Commit": "89d4b39103bbfa82660a767c73567270092763ac",
+    "Entropy": 3.251629,
+    "Author": "Test",
+    "Email": "test@test.com",
+    "Date": "2026-05-05T08:35:47Z",
+    "Message": "260505 commit",
+    "Tags": [],
+    "RuleID": "hashicorp-tf-password",
+    "Fingerprint": "89d4b39103bbfa82660a767c73567270092763ac:docs/PostgreSQL.md:hashicorp-tf-password:22",
+    "repo": "LightningEver"
+  }
+]
